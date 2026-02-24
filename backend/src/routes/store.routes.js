@@ -1,0 +1,10 @@
+const router = require('express').Router();
+const ctrl = require('../controllers/store.controller');
+const { authenticate, authorize } = require('../middlewares/auth.middleware');
+router.get('/open', ctrl.getOpen.bind(ctrl));
+router.get('/:id', ctrl.getById.bind(ctrl));
+router.get('/', authenticate, authorize('ADMIN'), ctrl.getMyStores.bind(ctrl));
+router.post('/', authenticate, authorize('ADMIN'), ctrl.create.bind(ctrl));
+router.put('/:id', authenticate, authorize('ADMIN'), ctrl.update.bind(ctrl));
+router.delete('/:id', authenticate, authorize('ADMIN'), ctrl.delete.bind(ctrl));
+module.exports = router;
