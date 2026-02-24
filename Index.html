@@ -1,0 +1,951 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GitHub Uploader – DeliveryApp</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #0d1117; color: #e6edf3; min-height: 100vh; padding: 1.5rem 1rem; }
+  h1 { font-size: 1.4rem; margin-bottom: .25rem; color: #58a6ff; }
+  p.sub { color: #8b949e; font-size: .9rem; margin-bottom: 1.5rem; }
+  label { display: block; font-size: .85rem; color: #8b949e; margin-bottom: .3rem; }
+  input { width: 100%; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: .7rem 1rem; color: #e6edf3; font-size: .95rem; margin-bottom: 1rem; outline: none; }
+  input:focus { border-color: #58a6ff; }
+  button { width: 100%; background: #238636; color: white; border: none; border-radius: 8px; padding: .85rem; font-size: 1rem; font-weight: 600; cursor: pointer; margin-top: .5rem; }
+  button:disabled { background: #21262d; color: #484f58; cursor: not-allowed; }
+  .log { margin-top: 1.5rem; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; max-height: 55vh; overflow-y: auto; font-family: monospace; font-size: .8rem; }
+  .log-line { padding: .15rem 0; border-bottom: 1px solid #21262d; }
+  .ok { color: #3fb950; }
+  .err { color: #f85149; }
+  .info { color: #58a6ff; }
+  .warn { color: #d29922; }
+  .done { margin-top: 1rem; background: #0d419d; border-radius: 8px; padding: 1rem; text-align: center; display: none; }
+  .done a { color: #58a6ff; font-weight: 700; }
+  .progress { margin-top: 1rem; background: #21262d; border-radius: 99px; height: 8px; overflow: hidden; display: none; }
+  .progress-bar { height: 100%; background: #238636; width: 0%; transition: width .3s; }
+</style>
+</head>
+<body>
+
+<h1>🚀 GitHub Uploader</h1>
+<p class="sub">Sobe o projeto DeliveryApp direto para o seu repositório</p>
+
+<label>Token do GitHub (ghp_...)</label>
+<input type="password" id="token" placeholder="ghp_..." />
+
+<label>Usuário do GitHub</label>
+<input type="text" id="user" placeholder="daltao-cmd" value="daltao-cmd" />
+
+<label>Nome do repositório</label>
+<input type="text" id="repo" placeholder="delivery-app" value="fictional-palm-tree" />
+
+<button id="btn" onclick="startUpload()">📤 Fazer Upload</button>
+
+<div class="progress" id="progress"><div class="progress-bar" id="bar"></div></div>
+
+<div class="done" id="done">
+  ✅ Upload concluído! Ver repositório: <a id="repo-link" href="#" target="_blank">abrir no GitHub</a>
+</div>
+
+<div class="log" id="log" style="display:none"></div>
+
+<script>
+const files = {
+"README.md": `# 🛵 DeliveryApp – Plataforma Multi-Loja
+
+Sistema completo de delivery multi-loja com painel administrativo, autenticação JWT e regras de horário automáticas.
+
+## 🏗️ Arquitetura
+
+\`\`\`
+delivery-app/
+├── backend/                  # Node.js + Express + Prisma
+│   ├── prisma/
+│   │   ├── schema.prisma
+│   │   └── seed.js
+│   └── src/
+│       ├── server.js
+│       ├── app.js
+│       ├── config/
+│       ├── controllers/
+│       ├── services/
+│       ├── routes/
+│       └── middlewares/
+├── frontend/                 # React 18
+│   └── src/
+│       ├── App.js
+│       ├── App.css
+│       ├── contexts/
+│       └── services/
+└── docker-compose.yml
+\`\`\`
+
+## 🚀 Como Rodar
+
+\`\`\`bash
+docker-compose up --build
+\`\`\`
+
+Acesse: http://localhost:3000
+
+## 👤 Usuários de Teste
+
+| Role     | Email                   | Senha       |
+|----------|-------------------------|-------------|
+| Admin    | admin@delivery.com      | admin123    |
+| Consumer | user@delivery.com       | consumer123 |
+`,
+
+"docker-compose.yml": `version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: delivery_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: delivery_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    container_name: delivery_backend
+    environment:
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/delivery_db
+      JWT_SECRET: super-secret-key-change-in-production
+      JWT_EXPIRES_IN: 7d
+      PORT: 3001
+      NODE_ENV: development
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: sh -c "npx prisma migrate deploy && node prisma/seed.js && npm start"
+
+  frontend:
+    build: ./frontend
+    container_name: delivery_frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
+`,
+
+"backend/Dockerfile": `FROM node:20-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npx prisma generate
+EXPOSE 3001
+CMD ["node", "src/server.js"]
+`,
+
+"backend/.env.example": `DATABASE_URL="postgresql://postgres:password@localhost:5432/delivery_db"
+JWT_SECRET="your-super-secret-jwt-key-change-in-production"
+JWT_EXPIRES_IN="7d"
+PORT=3001
+NODE_ENV=development
+`,
+
+"backend/package.json": `{
+  "name": "delivery-backend",
+  "version": "1.0.0",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
+    "db:migrate": "npx prisma migrate dev",
+    "db:seed": "node prisma/seed.js",
+    "db:studio": "npx prisma studio"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.7.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-validator": "^7.0.1",
+    "jsonwebtoken": "^9.0.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2",
+    "prisma": "^5.7.0"
+  }
+}
+`,
+
+"backend/prisma/schema.prisma": `generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  password  String
+  role      Role     @default(CONSUMER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  stores    Store[]
+  orders    Order[]
+  @@map("users")
+}
+
+enum Role {
+  ADMIN
+  CONSUMER
+}
+
+model Store {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  openTime    String
+  closeTime   String
+  imageUrl    String?
+  adminId     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  admin       User      @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  products    Product[]
+  orders      Order[]
+  @@map("stores")
+}
+
+model Product {
+  id          String  @id @default(uuid())
+  name        String
+  description String?
+  price       Decimal @db.Decimal(10, 2)
+  available   Boolean @default(true)
+  imageUrl    String?
+  storeId     String
+  store       Store       @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  orderItems  OrderItem[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  @@map("products")
+}
+
+model Order {
+  id         String      @id @default(uuid())
+  userId     String
+  storeId    String
+  status     OrderStatus @default(PENDING)
+  totalPrice Decimal     @db.Decimal(10, 2)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  store      Store       @relation(fields: [storeId], references: [id])
+  orderItems OrderItem[]
+  @@map("orders")
+}
+
+enum OrderStatus {
+  PENDING
+  PREPARING
+  DELIVERED
+  CANCELLED
+}
+
+model OrderItem {
+  id        String  @id @default(uuid())
+  orderId   String
+  productId String
+  quantity  Int
+  unitPrice Decimal @db.Decimal(10, 2)
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id])
+  @@map("order_items")
+}
+`,
+
+"backend/prisma/seed.js": `const { PrismaClient } = require('@prisma/client');
+const bcrypt = require('bcryptjs');
+const prisma = new PrismaClient();
+
+async function main() {
+  console.log('🌱 Seeding database...');
+  const adminPassword = await bcrypt.hash('admin123', 10);
+  const admin = await prisma.user.upsert({
+    where: { email: 'admin@delivery.com' },
+    update: {},
+    create: { name: 'Admin', email: 'admin@delivery.com', password: adminPassword, role: 'ADMIN' },
+  });
+
+  const consumerPassword = await bcrypt.hash('consumer123', 10);
+  await prisma.user.upsert({
+    where: { email: 'user@delivery.com' },
+    update: {},
+    create: { name: 'João Silva', email: 'user@delivery.com', password: consumerPassword, role: 'CONSUMER' },
+  });
+
+  await prisma.store.create({
+    data: {
+      name: 'Pizzaria Bella Napoli',
+      description: 'As melhores pizzas artesanais da cidade',
+      openTime: '18:00', closeTime: '23:30', adminId: admin.id,
+      products: { create: [
+        { name: 'Pizza Margherita', description: 'Molho de tomate, mozzarella e manjericão', price: 45.90, available: true },
+        { name: 'Pizza Calabresa', description: 'Calabresa fatiada com cebola', price: 49.90, available: true },
+        { name: 'Pizza Quatro Queijos', description: 'Mozzarella, parmesão, gorgonzola e catupiry', price: 55.90, available: true },
+      ]},
+    },
+  });
+
+  await prisma.store.create({
+    data: {
+      name: 'Burger House',
+      description: 'Hambúrgueres artesanais com ingredientes frescos',
+      openTime: '11:00', closeTime: '22:00', adminId: admin.id,
+      products: { create: [
+        { name: 'Classic Burger', description: '180g de carne, queijo, alface e tomate', price: 32.90, available: true },
+        { name: 'BBQ Burger', description: '180g de carne, queijo, bacon e molho BBQ', price: 39.90, available: true },
+        { name: 'Batata Frita', description: 'Porção de batata frita crocante', price: 18.90, available: true },
+      ]},
+    },
+  });
+
+  await prisma.store.create({
+    data: {
+      name: 'Sushi Zen',
+      description: 'Culinária japonesa autêntica',
+      openTime: '12:00', closeTime: '23:00', adminId: admin.id,
+      products: { create: [
+        { name: 'Combinado Executivo (20 peças)', description: 'Seleção do chef', price: 68.90, available: true },
+        { name: 'Temaki Salmão', description: 'Cone de alga com arroz e salmão fresco', price: 28.90, available: true },
+      ]},
+    },
+  });
+
+  console.log('✅ Seed completed!');
+}
+
+main().catch(console.error).finally(async () => { await prisma.$disconnect(); });
+`,
+
+"backend/src/server.js": `require('dotenv').config();
+const app = require('./app');
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => {
+  console.log(\`🚀 Server running on http://localhost:\${PORT}\`);
+});
+`,
+
+"backend/src/app.js": `const express = require('express');
+const cors = require('cors');
+const authRoutes = require('./routes/auth.routes');
+const storeRoutes = require('./routes/store.routes');
+const productRoutes = require('./routes/product.routes');
+const orderRoutes = require('./routes/order.routes');
+const userRoutes = require('./routes/user.routes');
+const { errorHandler } = require('./middlewares/error.middleware');
+
+const app = express();
+app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:3000' }));
+app.use(express.json());
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
+app.use('/api/auth', authRoutes);
+app.use('/api/stores', storeRoutes);
+app.use('/api/products', productRoutes);
+app.use('/api/orders', orderRoutes);
+app.use('/api/users', userRoutes);
+app.use(errorHandler);
+
+module.exports = app;
+`,
+
+"backend/src/config/prisma.js": `const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient({
+  log: process.env.NODE_ENV === 'development' ? ['error'] : ['error'],
+});
+module.exports = prisma;
+`,
+
+"backend/src/middlewares/auth.middleware.js": `const jwt = require('jsonwebtoken');
+const prisma = require('../config/prisma');
+
+const authenticate = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Token não fornecido' });
+  }
+  const token = authHeader.split(' ')[1];
+  try {
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await prisma.user.findUnique({ where: { id: payload.sub } });
+    if (!user) return res.status(401).json({ error: 'Usuário não encontrado' });
+    req.user = user;
+    next();
+  } catch {
+    return res.status(401).json({ error: 'Token inválido ou expirado' });
+  }
+};
+
+const authorize = (...roles) => (req, res, next) => {
+  if (!roles.includes(req.user.role)) {
+    return res.status(403).json({ error: 'Acesso não autorizado' });
+  }
+  next();
+};
+
+module.exports = { authenticate, authorize };
+`,
+
+"backend/src/middlewares/error.middleware.js": `const errorHandler = (err, req, res, next) => {
+  console.error(err);
+  if (err.code === 'P2002') return res.status(409).json({ error: 'Registro já existe' });
+  if (err.code === 'P2025') return res.status(404).json({ error: 'Registro não encontrado' });
+  return res.status(err.status || 500).json({ error: err.message || 'Erro interno do servidor' });
+};
+module.exports = { errorHandler };
+`,
+
+"backend/src/services/auth.service.js": `const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const prisma = require('../config/prisma');
+
+class AuthService {
+  async register({ name, email, password, role = 'CONSUMER' }) {
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) throw Object.assign(new Error('E-mail já cadastrado'), { status: 409 });
+    const hashed = await bcrypt.hash(password, 10);
+    const user = await prisma.user.create({
+      data: { name, email, password: hashed, role },
+      select: { id: true, name: true, email: true, role: true, createdAt: true },
+    });
+    const token = this._generateToken(user.id);
+    return { user, token };
+  }
+
+  async login({ email, password }) {
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) throw Object.assign(new Error('Credenciais inválidas'), { status: 401 });
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid) throw Object.assign(new Error('Credenciais inválidas'), { status: 401 });
+    const { password: _, ...safeUser } = user;
+    return { user: safeUser, token: this._generateToken(user.id) };
+  }
+
+  _generateToken(userId) {
+    return jwt.sign({ sub: userId }, process.env.JWT_SECRET, {
+      expiresIn: process.env.JWT_EXPIRES_IN || '7d',
+    });
+  }
+}
+
+module.exports = new AuthService();
+`,
+
+"backend/src/services/store.service.js": `const prisma = require('../config/prisma');
+
+const isStoreOpen = (openTime, closeTime) => {
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const [openH, openM] = openTime.split(':').map(Number);
+  const [closeH, closeM] = closeTime.split(':').map(Number);
+  const openMinutes = openH * 60 + openM;
+  const closeMinutes = closeH * 60 + closeM;
+  if (closeMinutes < openMinutes) {
+    return currentMinutes >= openMinutes || currentMinutes < closeMinutes;
+  }
+  return currentMinutes >= openMinutes && currentMinutes < closeMinutes;
+};
+
+const addIsOpen = (store) => ({ ...store, isOpen: isStoreOpen(store.openTime, store.closeTime) });
+
+class StoreService {
+  async getOpenStores() {
+    const stores = await prisma.store.findMany({
+      include: { admin: { select: { name: true } }, _count: { select: { products: true } } },
+      orderBy: { name: 'asc' },
+    });
+    return stores.map(addIsOpen).filter((s) => s.isOpen);
+  }
+
+  async getAllStores(adminId) {
+    const stores = await prisma.store.findMany({
+      where: { adminId },
+      include: { _count: { select: { products: true, orders: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    return stores.map(addIsOpen);
+  }
+
+  async getById(id) {
+    const store = await prisma.store.findUniqueOrThrow({
+      where: { id },
+      include: { admin: { select: { name: true } }, products: { where: { available: true }, orderBy: { name: 'asc' } } },
+    });
+    return addIsOpen(store);
+  }
+
+  async create(data, adminId) { return prisma.store.create({ data: { ...data, adminId } }); }
+
+  async update(id, data, adminId) {
+    await this._assertOwnership(id, adminId);
+    return prisma.store.update({ where: { id }, data });
+  }
+
+  async delete(id, adminId) {
+    await this._assertOwnership(id, adminId);
+    return prisma.store.delete({ where: { id } });
+  }
+
+  async _assertOwnership(id, adminId) {
+    const store = await prisma.store.findUniqueOrThrow({ where: { id } });
+    if (store.adminId !== adminId) throw Object.assign(new Error('Acesso não autorizado'), { status: 403 });
+  }
+}
+
+module.exports = new StoreService();
+`,
+
+"backend/src/services/product.service.js": `const prisma = require('../config/prisma');
+
+class ProductService {
+  async getByStore(storeId) {
+    return prisma.product.findMany({
+      where: { storeId },
+      orderBy: [{ available: 'desc' }, { name: 'asc' }],
+    });
+  }
+
+  async create(data, adminId) {
+    const store = await prisma.store.findUniqueOrThrow({ where: { id: data.storeId } });
+    if (store.adminId !== adminId) throw Object.assign(new Error('Acesso negado'), { status: 403 });
+    return prisma.product.create({ data });
+  }
+
+  async update(id, data, adminId) {
+    await this._assertOwnership(id, adminId);
+    return prisma.product.update({ where: { id }, data });
+  }
+
+  async delete(id, adminId) {
+    await this._assertOwnership(id, adminId);
+    return prisma.product.delete({ where: { id } });
+  }
+
+  async _assertOwnership(id, adminId) {
+    const product = await prisma.product.findUniqueOrThrow({
+      where: { id },
+      include: { store: { select: { adminId: true } } },
+    });
+    if (product.store.adminId !== adminId) throw Object.assign(new Error('Acesso negado'), { status: 403 });
+  }
+}
+
+module.exports = new ProductService();
+`,
+
+"backend/src/services/order.service.js": `const prisma = require('../config/prisma');
+const storeService = require('./store.service');
+
+class OrderService {
+  async create({ storeId, items }, userId) {
+    const store = await storeService.getById(storeId);
+    if (!store.isOpen) throw Object.assign(new Error('Loja está fechada no momento'), { status: 400 });
+
+    const productIds = items.map((i) => i.productId);
+    const products = await prisma.product.findMany({
+      where: { id: { in: productIds }, storeId, available: true },
+    });
+    if (products.length !== items.length) {
+      throw Object.assign(new Error('Um ou mais produtos inválidos ou indisponíveis'), { status: 400 });
+    }
+
+    const productMap = Object.fromEntries(products.map((p) => [p.id, p]));
+    let totalPrice = 0;
+    const orderItems = items.map(({ productId, quantity }) => {
+      const product = productMap[productId];
+      const unitPrice = Number(product.price);
+      totalPrice += unitPrice * quantity;
+      return { productId, quantity, unitPrice };
+    });
+
+    return prisma.order.create({
+      data: { userId, storeId, totalPrice, status: 'PENDING', orderItems: { create: orderItems } },
+      include: { orderItems: { include: { product: { select: { name: true } } } }, store: { select: { name: true } } },
+    });
+  }
+
+  async getUserOrders(userId) {
+    return prisma.order.findMany({
+      where: { userId },
+      include: { store: { select: { id: true, name: true } }, orderItems: { include: { product: { select: { name: true } } } } },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async getStoreOrders(storeId, adminId) {
+    const store = await prisma.store.findUniqueOrThrow({ where: { id: storeId } });
+    if (store.adminId !== adminId) throw Object.assign(new Error('Acesso negado'), { status: 403 });
+    return prisma.order.findMany({
+      where: { storeId },
+      include: { user: { select: { name: true, email: true } }, orderItems: { include: { product: { select: { name: true } } } } },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async updateStatus(orderId, status, adminId) {
+    const order = await prisma.order.findUniqueOrThrow({
+      where: { id: orderId },
+      include: { store: { select: { adminId: true } } },
+    });
+    if (order.store.adminId !== adminId) throw Object.assign(new Error('Acesso negado'), { status: 403 });
+    return prisma.order.update({ where: { id: orderId }, data: { status } });
+  }
+}
+
+module.exports = new OrderService();
+`,
+
+"backend/src/controllers/auth.controller.js": `const authService = require('../services/auth.service');
+class AuthController {
+  async register(req, res, next) { try { res.status(201).json(await authService.register(req.body)); } catch (err) { next(err); } }
+  async login(req, res, next) { try { res.json(await authService.login(req.body)); } catch (err) { next(err); } }
+  async me(req, res) { const { password, ...user } = req.user; res.json(user); }
+}
+module.exports = new AuthController();
+`,
+
+"backend/src/controllers/store.controller.js": `const storeService = require('../services/store.service');
+class StoreController {
+  async getOpen(req, res, next) { try { res.json(await storeService.getOpenStores()); } catch (err) { next(err); } }
+  async getById(req, res, next) { try { res.json(await storeService.getById(req.params.id)); } catch (err) { next(err); } }
+  async getMyStores(req, res, next) { try { res.json(await storeService.getAllStores(req.user.id)); } catch (err) { next(err); } }
+  async create(req, res, next) { try { res.status(201).json(await storeService.create(req.body, req.user.id)); } catch (err) { next(err); } }
+  async update(req, res, next) { try { res.json(await storeService.update(req.params.id, req.body, req.user.id)); } catch (err) { next(err); } }
+  async delete(req, res, next) { try { await storeService.delete(req.params.id, req.user.id); res.status(204).end(); } catch (err) { next(err); } }
+}
+module.exports = new StoreController();
+`,
+
+"backend/src/controllers/product.controller.js": `const productService = require('../services/product.service');
+class ProductController {
+  async getByStore(req, res, next) { try { res.json(await productService.getByStore(req.params.storeId)); } catch (err) { next(err); } }
+  async create(req, res, next) { try { res.status(201).json(await productService.create(req.body, req.user.id)); } catch (err) { next(err); } }
+  async update(req, res, next) { try { res.json(await productService.update(req.params.id, req.body, req.user.id)); } catch (err) { next(err); } }
+  async delete(req, res, next) { try { await productService.delete(req.params.id, req.user.id); res.status(204).end(); } catch (err) { next(err); } }
+}
+module.exports = new ProductController();
+`,
+
+"backend/src/controllers/order.controller.js": `const orderService = require('../services/order.service');
+class OrderController {
+  async create(req, res, next) { try { res.status(201).json(await orderService.create(req.body, req.user.id)); } catch (err) { next(err); } }
+  async myOrders(req, res, next) { try { res.json(await orderService.getUserOrders(req.user.id)); } catch (err) { next(err); } }
+  async storeOrders(req, res, next) { try { res.json(await orderService.getStoreOrders(req.params.storeId, req.user.id)); } catch (err) { next(err); } }
+  async updateStatus(req, res, next) { try { res.json(await orderService.updateStatus(req.params.id, req.body.status, req.user.id)); } catch (err) { next(err); } }
+}
+module.exports = new OrderController();
+`,
+
+"backend/src/routes/auth.routes.js": `const router = require('express').Router();
+const ctrl = require('../controllers/auth.controller');
+const { authenticate } = require('../middlewares/auth.middleware');
+router.post('/register', ctrl.register.bind(ctrl));
+router.post('/login', ctrl.login.bind(ctrl));
+router.get('/me', authenticate, ctrl.me.bind(ctrl));
+module.exports = router;
+`,
+
+"backend/src/routes/store.routes.js": `const router = require('express').Router();
+const ctrl = require('../controllers/store.controller');
+const { authenticate, authorize } = require('../middlewares/auth.middleware');
+router.get('/open', ctrl.getOpen.bind(ctrl));
+router.get('/:id', ctrl.getById.bind(ctrl));
+router.get('/', authenticate, authorize('ADMIN'), ctrl.getMyStores.bind(ctrl));
+router.post('/', authenticate, authorize('ADMIN'), ctrl.create.bind(ctrl));
+router.put('/:id', authenticate, authorize('ADMIN'), ctrl.update.bind(ctrl));
+router.delete('/:id', authenticate, authorize('ADMIN'), ctrl.delete.bind(ctrl));
+module.exports = router;
+`,
+
+"backend/src/routes/product.routes.js": `const router = require('express').Router();
+const ctrl = require('../controllers/product.controller');
+const { authenticate, authorize } = require('../middlewares/auth.middleware');
+router.get('/store/:storeId', ctrl.getByStore.bind(ctrl));
+router.post('/', authenticate, authorize('ADMIN'), ctrl.create.bind(ctrl));
+router.put('/:id', authenticate, authorize('ADMIN'), ctrl.update.bind(ctrl));
+router.delete('/:id', authenticate, authorize('ADMIN'), ctrl.delete.bind(ctrl));
+module.exports = router;
+`,
+
+"backend/src/routes/order.routes.js": `const router = require('express').Router();
+const ctrl = require('../controllers/order.controller');
+const { authenticate, authorize } = require('../middlewares/auth.middleware');
+router.post('/', authenticate, authorize('CONSUMER'), ctrl.create.bind(ctrl));
+router.get('/my', authenticate, ctrl.myOrders.bind(ctrl));
+router.get('/store/:storeId', authenticate, authorize('ADMIN'), ctrl.storeOrders.bind(ctrl));
+router.patch('/:id/status', authenticate, authorize('ADMIN'), ctrl.updateStatus.bind(ctrl));
+module.exports = router;
+`,
+
+"backend/src/routes/user.routes.js": `const router = require('express').Router();
+const prisma = require('../config/prisma');
+const { authenticate, authorize } = require('../middlewares/auth.middleware');
+router.get('/', authenticate, authorize('ADMIN'), async (req, res, next) => {
+  try {
+    const users = await prisma.user.findMany({
+      select: { id: true, name: true, email: true, role: true, createdAt: true },
+      orderBy: { name: 'asc' },
+    });
+    res.json(users);
+  } catch (err) { next(err); }
+});
+module.exports = router;
+`,
+
+"frontend/Dockerfile": `FROM node:20-alpine as build
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+
+FROM nginx:alpine
+COPY --from=build /app/build /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 3000
+CMD ["nginx", "-g", "daemon off;"]
+`,
+
+"frontend/nginx.conf": `server {
+    listen 3000;
+    root /usr/share/nginx/html;
+    index index.html;
+    location / { try_files $uri $uri/ /index.html; }
+    location /api {
+        proxy_pass http://backend:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+    }
+}
+`,
+
+"frontend/package.json": `{
+  "name": "delivery-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.21.0",
+    "react-scripts": "5.0.1",
+    "axios": "^1.6.2"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build"
+  },
+  "proxy": "http://localhost:3001",
+  "browserslist": {
+    "production": [">0.2%", "not dead"],
+    "development": ["last 1 chrome version"]
+  }
+}
+`,
+
+"frontend/public/index.html": `<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DeliveryApp</title>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
+`,
+
+"frontend/src/index.js": `import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<React.StrictMode><App /></React.StrictMode>);
+`,
+
+"frontend/src/services/api.js": `import axios from 'axios';
+const api = axios.create({ baseURL: process.env.REACT_APP_API_URL ? process.env.REACT_APP_API_URL + '/api' : '/api' });
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) config.headers.Authorization = \`Bearer \${token}\`;
+  return config;
+});
+api.interceptors.response.use((res) => res.data, (err) => Promise.reject(err.response?.data || err));
+export const authAPI = {
+  register: (data) => api.post('/auth/register', data),
+  login: (data) => api.post('/auth/login', data),
+  me: () => api.get('/auth/me'),
+};
+export const storesAPI = {
+  getOpen: () => api.get('/stores/open'),
+  getById: (id) => api.get(\`/stores/\${id}\`),
+  getMyStores: () => api.get('/stores'),
+  create: (data) => api.post('/stores', data),
+  update: (id, data) => api.put(\`/stores/\${id}\`, data),
+  delete: (id) => api.delete(\`/stores/\${id}\`),
+};
+export const productsAPI = {
+  getByStore: (storeId) => api.get(\`/products/store/\${storeId}\`),
+  create: (data) => api.post('/products', data),
+  update: (id, data) => api.put(\`/products/\${id}\`, data),
+  delete: (id) => api.delete(\`/products/\${id}\`),
+};
+export const ordersAPI = {
+  create: (data) => api.post('/orders', data),
+  myOrders: () => api.get('/orders/my'),
+  storeOrders: (storeId) => api.get(\`/orders/store/\${storeId}\`),
+  updateStatus: (id, status) => api.patch(\`/orders/\${id}/status\`, { status }),
+};
+`,
+
+"frontend/src/contexts/AuthContext.js": `import { createContext, useContext, useState, useEffect } from 'react';
+import { authAPI } from '../services/api';
+const AuthContext = createContext(null);
+export function AuthProvider({ children }) {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (token) { authAPI.me().then(setUser).catch(() => localStorage.removeItem('token')).finally(() => setLoading(false)); }
+    else { setLoading(false); }
+  }, []);
+  const login = async (credentials) => { const { user, token } = await authAPI.login(credentials); localStorage.setItem('token', token); setUser(user); return user; };
+  const register = async (data) => { const { user, token } = await authAPI.register(data); localStorage.setItem('token', token); setUser(user); return user; };
+  const logout = () => { localStorage.removeItem('token'); setUser(null); };
+  return <AuthContext.Provider value={{ user, loading, login, register, logout }}>{children}</AuthContext.Provider>;
+}
+export const useAuth = () => useContext(AuthContext);
+`,
+
+"frontend/src/contexts/CartContext.js": `import { createContext, useContext, useState } from 'react';
+const CartContext = createContext(null);
+export function CartProvider({ children }) {
+  const [cart, setCart] = useState({ storeId: null, storeName: '', items: [] });
+  const addItem = (product, storeId, storeName) => {
+    setCart((prev) => {
+      if (prev.storeId && prev.storeId !== storeId) {
+        if (!window.confirm(\`Limpar carrinho de "\${prev.storeName}" e adicionar de "\${storeName}"?\`)) return prev;
+        return { storeId, storeName, items: [{ ...product, quantity: 1 }] };
+      }
+      const existing = prev.items.find((i) => i.id === product.id);
+      if (existing) return { ...prev, storeId, storeName, items: prev.items.map((i) => i.id === product.id ? { ...i, quantity: i.quantity + 1 } : i) };
+      return { storeId, storeName, items: [...prev.items, { ...product, quantity: 1 }] };
+    });
+  };
+  const removeItem = (productId) => setCart((prev) => { const items = prev.items.filter((i) => i.id !== productId); return items.length === 0 ? { storeId: null, storeName: '', items: [] } : { ...prev, items }; });
+  const updateQuantity = (productId, quantity) => { if (quantity < 1) { removeItem(productId); return; } setCart((prev) => ({ ...prev, items: prev.items.map((i) => i.id === productId ? { ...i, quantity } : i) })); };
+  const clearCart = () => setCart({ storeId: null, storeName: '', items: [] });
+  const total = cart.items.reduce((sum, i) => sum + Number(i.price) * i.quantity, 0);
+  const count = cart.items.reduce((sum, i) => sum + i.quantity, 0);
+  return <CartContext.Provider value={{ cart, addItem, removeItem, updateQuantity, clearCart, total, count }}>{children}</CartContext.Provider>;
+}
+export const useCart = () => useContext(CartContext);
+`
+};
+
+function log(msg, cls = 'info') {
+  const div = document.getElementById('log');
+  div.style.display = 'block';
+  const line = document.createElement('div');
+  line.className = 'log-line ' + cls;
+  line.textContent = msg;
+  div.appendChild(line);
+  div.scrollTop = div.scrollHeight;
+}
+
+function toBase64(str) {
+  return btoa(unescape(encodeURIComponent(str)));
+}
+
+async function uploadFile(token, user, repo, path, content) {
+  const url = `https://api.github.com/repos/${user}/${repo}/contents/${path}`;
+  
+  // Check if file exists first
+  let sha = undefined;
+  try {
+    const check = await fetch(url, { headers: { 'Authorization': `token ${token}`, 'Accept': 'application/vnd.github.v3+json' } });
+    if (check.ok) { const data = await check.json(); sha = data.sha; }
+  } catch(e) {}
+
+  const body = { message: `add ${path}`, content: toBase64(content) };
+  if (sha) body.sha = sha;
+
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Authorization': `token ${token}`, 'Accept': 'application/vnd.github.v3+json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+
+  return res.ok;
+}
+
+async function startUpload() {
+  const token = document.getElementById('token').value.trim();
+  const user = document.getElementById('user').value.trim();
+  const repo = document.getElementById('repo').value.trim();
+
+  if (!token || !user || !repo) { alert('Preencha todos os campos!'); return; }
+
+  const btn = document.getElementById('btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Enviando...';
+
+  document.getElementById('progress').style.display = 'block';
+  document.getElementById('log').innerHTML = '';
+
+  log(`🚀 Iniciando upload para ${user}/${repo}...`);
+
+  const fileList = Object.entries(files);
+  let done = 0;
+
+  for (const [path, content] of fileList) {
+    log(`📤 ${path}...`, 'info');
+    try {
+      const ok = await uploadFile(token, user, repo, path, content);
+      if (ok) { log(`✅ ${path}`, 'ok'); }
+      else { log(`❌ Falha: ${path}`, 'err'); }
+    } catch(e) {
+      log(`❌ Erro em ${path}: ${e.message}`, 'err');
+    }
+    done++;
+    document.getElementById('bar').style.width = `${Math.round(done / fileList.length * 100)}%`;
+    await new Promise(r => setTimeout(r, 200));
+  }
+
+  log(`\n🎉 Concluído! ${done} arquivos processados.`, 'ok');
+  btn.textContent = '✅ Upload Concluído!';
+
+  const doneEl = document.getElementById('done');
+  doneEl.style.display = 'block';
+  const link = document.getElementById('repo-link');
+  link.href = `https://github.com/${user}/${repo}`;
+  link.textContent = `github.com/${user}/${repo}`;
+}
+</script>
+</body>
+</html>
